@@ -1,0 +1,9 @@
+streamlit
+tensorflow
+scikit-learn
+pywavelets
+mne
+pandas
+matplotlib
+numpy
+opencv-python
