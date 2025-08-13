@@ -6,6 +6,7 @@ from tensorflow.keras.models import Sequential
 from tensorflow.keras.layers import LSTM, Dense
 from datetime import datetime
 import pywt
+import re  # Regular expressions for flexible input parsing
 
 # --- LSTM Model Setup ---
 def create_lstm_model(input_shape):
@@ -17,26 +18,26 @@ def create_lstm_model(input_shape):
     model.compile(optimizer='adam', loss='binary_crossentropy', metrics=['accuracy'])
     return model
 
-# Initialize or load your trained model
 def get_model():
     if 'model' not in st.session_state:
-        # Create a dummy model (replace with your trained model)
-        model = create_lstm_model((None, 1))  # Adjust input shape as needed
-        # Train with dummy data or load weights here
+        model = create_lstm_model((None, 1))
         st.session_state.model = model
     return st.session_state.model
 
 # --- EEG Processing ---
 def preprocess_eeg(data):
-    """Simple preprocessing - normalize and reshape for LSTM"""
     data = np.array(data)
-    # Normalize
     data = (data - np.mean(data)) / np.std(data)
-    # Reshape for LSTM (samples, timesteps, features)
     return data.reshape(1, -1, 1)
 
+def parse_eeg_input(raw_input):
+    """Convert various input formats to numeric list"""
+    # Remove brackets, commas, and extra spaces
+    cleaned = re.sub(r'[\[\],]', ' ', raw_input)
+    # Split on any whitespace
+    return [float(x) for x in cleaned.split() if x]
+
 def predict_seizure(data):
-    """Make prediction using LSTM model"""
     model = get_model()
     processed_data = preprocess_eeg(data)
     return model.predict(processed_data)[0][0]
@@ -57,6 +58,10 @@ st.markdown("""
     .stButton>button {
         background-color: #4CAF50;
         color: white;
+    }
+    .eeg-input {
+        font-family: monospace;
+        white-space: pre;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -89,22 +94,30 @@ with col1:
 with col2:
     st.markdown("### Product from Raw EEG Signal")
     
-    # EEG Data Input
-    sample_data = "-1.4408, 1.2876, -1.0992, -0.4306, 1.4696, 0.1682, 1.228, -0.1394"
+    st.markdown("""
+    <div style='color: gray; font-size: 0.9em; margin-bottom: 10px;'>
+        Enter EEG values separated by spaces, commas, or newlines:
+    </div>
+    """, unsafe_allow_html=True)
+    
+    # EEG Data Input - More flexible format
+    sample_data = """-1.4408 1.2876 -1.0992 -0.4306 
+    1.4696 0.1682 1.228 -0.1394"""
+    
     eeg_data = st.text_area(
-        "Enter EEG values (comma separated)",
+        "Paste EEG values here:",
         value=sample_data,
-        height=120
+        height=120,
+        key="eeg-input"
     )
     
     if st.button("📌 Predict from Raw EEG"):
         try:
-            data = [float(x.strip()) for x in eeg_data.split(",") if x.strip()]
+            data = parse_eeg_input(eeg_data)
             
-            if len(data) < 10:  # Minimum reasonable length
-                st.warning("Warning: Very short EEG segment - accuracy may be affected")
+            if len(data) < 10:
+                st.warning(f"Warning: Only {len(data)} points detected. For best results, provide at least 384 samples (1.5s at 256Hz).")
             
-            # Make prediction
             with st.spinner("Analyzing..."):
                 seizure_prob = predict_seizure(data)
                 seizure_detected = seizure_prob > 0.5
@@ -116,27 +129,31 @@ with col2:
                 st.success(f"✅ Normal EEG (confidence: {1-seizure_prob:.0%})")
             
             # Confidence meter
-            st.markdown("""
+            st.markdown(f"""
             <div style='display:flex; margin-top:20px'>
-                <div style='display:flex; flex-direction:column; justify-content:space-between; height:220px'>
-                    <span>1.0</span><span>0.9</span><span>0.8</span><span>0.7</span><span>0.6</span>
-                    <span>0.5</span><span>0.4</span><span>0.3</span><span>0.2</span><span>0.1</span><span>0.0</span>
+                <div style='display:flex; flex-direction:column; justify-content:space-between; height:220px; font-size:0.8em;'>
+                    {"".join(f"<span>{1-i*0.1:.1f}</span>" for i in range(11))}
                 </div>
-                <div style='margin-left:10px; width:25px; height:220px; background:linear-gradient(to top, red, green); position:relative'>
-                    <div style='position:absolute; width:100%; height:{}%; bottom:0; background:rgba(255,255,255,0.5)'></div>
+                <div style='margin-left:10px; width:25px; height:220px; background:linear-gradient(to top, #ff4b4b, #4CAF50); position:relative'>
+                    <div style='position:absolute; width:100%; height:{100 - (seizure_prob * 100):.1f}%; bottom:0; background:rgba(255,255,255,0.5)'></div>
                 </div>
             </div>
-            """.format(100 - (seizure_prob * 100)), unsafe_allow_html=True)
+            """, unsafe_allow_html=True)
             
             # Plot EEG
             fig, ax = plt.subplots(figsize=(8, 3))
             ax.plot(data)
             ax.set_xlabel("Samples")
-            ax.set_ylabel("Amplitude")
+            ax.set_ylabel("Amplitude (μV)")
             st.pyplot(fig)
             
-        except ValueError:
-            st.error("Invalid input. Use comma-separated numbers only.")
+            # Show stats
+            with st.expander("📊 Signal Statistics"):
+                st.write(f"Mean: {np.mean(data):.2f} μV | Std: {np.std(data):.2f} μV")
+                st.write(f"Min: {np.min(data):.2f} μV | Max: {np.max(data):.2f} μV")
+                
+        except ValueError as e:
+            st.error(f"Invalid input: {str(e)}. Please enter numeric values only.")
 
 # Footer
 st.markdown("---")
